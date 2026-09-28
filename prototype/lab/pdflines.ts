@@ -1,5 +1,0 @@
-import * as m from 'mupdf';import {readFileSync} from 'node:fs';
-export type L={t:string,x0:number,x1:number,base:number,size:number,font:string,chars:{c:string,x:number,y:number,x1:number}[]};
-// scale converts PDF points to Figma px
-export function pdfLines(pdf:Uint8Array|string,page:number,scale:number):L[]{const d=m.Document.openDocument(Buffer.from(typeof pdf==='string'?readFileSync(pdf):pdf),'application/pdf');const p=d.loadPage(page);const out:L[]=[];let cur:any;
- p.toStructuredText('preserve-whitespace').walk({beginLine(){cur={t:'',chars:[],size:0,font:''}},onChar(c:string,o:number[],f:any,s:number,q:number[]){cur.t+=c;cur.chars.push({c,x:o[0]*scale,y:o[1]*scale,x1:Math.max(q[2],q[6])*scale});if(c.trim()){cur.size=Math.max(cur.size,s*scale);cur.font=f.getName()}},endLine(){const cs=cur.chars.filter((c:any)=>c.c.trim());if(!cs.length)return;out.push({t:cur.t,x0:cs[0].x,x1:Math.max(...cs.map((c:any)=>c.x1)),base:cs[0].y,size:cur.size,font:cur.font,chars:cur.chars})}} as any);return out}

@@ -1,0 +1,171 @@
+{
+ "fileKey": "SyntheticDeck0001",
+ "fileName": "Synthetic deck",
+ "version": "1001",
+ "frameIds": [
+  "1:2",
+  "1:40"
+ ],
+ "passes": 1,
+ "frames": [
+  {
+   "id": "1:2",
+   "name": "Cover",
+   "text": 3,
+   "shapes": 6,
+   "rasters": 1,
+   "plates": 0,
+   "rasterText": 0
+  },
+  {
+   "id": "1:40",
+   "name": "Details",
+   "text": 2,
+   "shapes": 2,
+   "rasters": 0,
+   "plates": 0,
+   "rasterText": 0
+  }
+ ],
+ "warnings": [],
+ "fonts": {
+  "Arial-BoldMT": "Arial +b",
+  "ArialMT": "Arial"
+ },
+ "faces": [
+  {
+   "figma": "Arial-BoldMT",
+   "typeface": "Arial",
+   "b": 1,
+   "i": 0,
+   "status": "exact"
+  },
+  {
+   "figma": "ArialMT",
+   "typeface": "Arial",
+   "b": 0,
+   "i": 0,
+   "status": "exact"
+  }
+ ],
+ "embeddedFonts": [
+  {
+   "typeface": "Arial",
+   "slot": "bold",
+   "embedded": false,
+   "reason": "font file unknown"
+  },
+  {
+   "typeface": "Arial",
+   "slot": "regular",
+   "embedded": false,
+   "reason": "font file unknown"
+  }
+ ],
+ "textLines": [
+  {
+   "node": "1:7",
+   "t": "Figma to PowerPoint, ",
+   "x": 40,
+   "base": 397.35,
+   "align": "l",
+   "size": 40,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:7",
+   "t": "one to one",
+   "x": 40,
+   "base": 445.35,
+   "align": "l",
+   "size": 40,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:8",
+   "t": "Centred lines keep their ",
+   "x": 587.305,
+   "base": 272.3,
+   "align": "ctr",
+   "size": 20,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:8",
+   "t": "trailing space but give it ",
+   "x": 578.438,
+   "base": 302.3,
+   "align": "ctr",
+   "size": 20,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:8",
+   "t": "no advance",
+   "x": 651.66,
+   "base": 332.3,
+   "align": "ctr",
+   "size": 20,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:9",
+   "t": "First point",
+   "x": 518,
+   "base": 398.4,
+   "align": "l",
+   "size": 18,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:9",
+   "t": "Second point",
+   "x": 518,
+   "base": 422.4,
+   "align": "l",
+   "size": 18,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:9",
+   "t": "continues",
+   "x": 518,
+   "base": 446.4,
+   "align": "l",
+   "size": 18,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:9",
+   "t": "Plain line",
+   "x": 500,
+   "base": 470.4,
+   "align": "l",
+   "size": 18,
+   "frame": "1:2"
+  },
+  {
+   "node": "1:41",
+   "t": "ROTATED LABEL",
+   "x": 0,
+   "base": 18.4,
+   "align": "l",
+   "size": 20,
+   "rotated": true,
+   "frame": "1:40"
+  },
+  {
+   "node": "1:42",
+   "t": "Right aligned, underlined",
+   "x": 642.87,
+   "base": 120.8,
+   "align": "r",
+   "size": 22,
+   "frame": "1:40"
+  }
+ ],
+ "rasters": {
+  "1:10": "image fill"
+ },
+ "blurPanels": []
+}

@@ -1,0 +1,37 @@
+<svg width="960" height="540" viewBox="0 0 960 540" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g data-node-id="1:2" clip-path="url(#clip0_1_2)">
+<rect width="960" height="540" fill="#F4F1EA"/>
+<rect data-node-id="1:3" x="41" y="41" width="398" height="198" rx="15" fill="white" stroke="#1E30F9" stroke-width="2" stroke-dasharray="6 4"/>
+<path data-node-id="1:4" d="M780 110A60 60 0 1 0 900 110A60 60 0 1 0 780 110ZM810 110A30 30 0 1 1 870 110A30 30 0 1 1 810 110Z" fill="#1E30F9"/>
+<line data-node-id="1:5" x1="40" y1="260" x2="440" y2="260" stroke="url(#paint0_linear_1_5)" stroke-width="4" stroke-linecap="round"/>
+<rect data-node-id="1:6" x="40" y="280" width="400" height="60" fill="url(#paint1_linear_1_6)"/>
+<g data-node-id="1:7">
+<text fill="#101820" style="white-space: pre" xml:space="preserve" font-family="Arial" font-size="40" font-weight="bold" letter-spacing="-0.8px"><tspan x="40" y="397.35">Figma to PowerPoint, </tspan></text>
+<text fill="#1E30F9" style="white-space: pre" xml:space="preserve" font-family="Arial" font-size="40" letter-spacing="-0.8px"><tspan x="40" y="445.35">one to one</tspan></text>
+</g>
+<text data-node-id="1:8" fill="#101820" style="white-space: pre" xml:space="preserve" font-family="Arial" font-size="20" letter-spacing="0px"><tspan x="587.305" y="272.3">Centred lines keep their </tspan><tspan x="578.438" y="302.3">trailing space but give it </tspan><tspan x="651.66" y="332.3">no advance</tspan></text>
+<text data-node-id="1:9" fill="#101820" style="white-space: pre" xml:space="preserve" font-family="Arial" font-size="18" letter-spacing="0px"><tspan x="518" y="398.4">First point&#10;</tspan><tspan x="518" y="422.4">Second point&#x2028;</tspan><tspan x="518" y="446.4">continues&#10;</tspan><tspan x="500" y="470.4">Plain line</tspan></text>
+<rect data-node-id="1:10" x="600" y="40" width="120" height="80" fill="url(#pattern0_1_10)"/>
+<g data-node-id="1:11" opacity="0.5">
+<circle data-node-id="1:12" cx="930" cy="480" r="20" fill="#FF6600"/>
+</g>
+</g>
+<defs>
+<pattern id="pattern0_1_10" patternContentUnits="objectBoundingBox" width="1" height="1">
+<use xlink:href="#image0_1_10" transform="scale(0.00416667 0.00625)"/>
+</pattern>
+<linearGradient id="paint0_linear_1_5" x1="40" y1="260.5" x2="440" y2="260.5" gradientUnits="userSpaceOnUse">
+<stop stop-color="#1E30F9"/>
+<stop offset="1" stop-color="#FF6600"/>
+</linearGradient>
+<linearGradient id="paint1_linear_1_6" x1="40" y1="310" x2="440" y2="310" gradientUnits="userSpaceOnUse">
+<stop stop-color="#1E30F9"/>
+<stop offset="0.5" stop-color="#1E30F9" stop-opacity="0.5"/>
+<stop offset="1" stop-color="#1E30F9" stop-opacity="0"/>
+</linearGradient>
+<clipPath id="clip0_1_2">
+<rect width="960" height="540" fill="white"/>
+</clipPath>
+<image id="image0_1_10" width="240" height="160" xlink:href="data:stripped"/>
+</defs>
+</svg>

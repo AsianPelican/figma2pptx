@@ -1,0 +1,15 @@
+node_modules/
+# Figma responses and renders: client content, never committed
+cache/
+# conversion outputs and benchmark artefacts
+out/
+bench-results/
+*.pptx
+*.pdf
+*.report.json
+*.corr.json
+!test/fixtures/**
+.env
+.env.*
+.DS_Store
+*.tsbuildinfo
