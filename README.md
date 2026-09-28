@@ -101,6 +101,20 @@ bun run bench out/deck.pdf \
 
 It reports pixel difference, exact line breaks, the prior 0.75 pt comparison, the prototype-compatible one-pixel count, the corrected per-line one-pixel result, worst-case offset, and each unmeasurable or failing line by slide and cause. Add `--diffs out/diffs` for heat maps. Benchmark outputs are gitignored.
 
+A warm-cache, 14-slide, two-pass baseline on the development Mac measured:
+
+| Stage | Seconds |
+| --- | ---: |
+| Build pass 1 | 4.50 |
+| PowerPoint export pass 1 | 132.01 |
+| Measure pass 1 | 0.21 |
+| Build pass 2 | 4.39 |
+| PowerPoint export pass 2 | 6.67 |
+| Final placement check | 0.12 |
+| Total | 147.90 |
+
+The first PowerPoint export includes that application's one-time startup/render warm-up; the second export is the useful steady-state comparison. This is a fidelity baseline, not a speed claim. On this run all 326 measurable lines were within one Figma pixel after pass 2, with a worst offset of 0.83 px; eight other reference lines were named as unmeasurable by the independent benchmark.
+
 The committed test fixture is synthetic and network-free. `bun test` checks SVG-to-DrawingML geometry, line mapping, tracking/centring corrections, font selection and embedding, progress behavior, PowerPoint safety decisions, and byte-stable golden PPTX output.
 
 ## Development
