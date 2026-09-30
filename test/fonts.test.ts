@@ -34,6 +34,15 @@ test('without a PostScript name (Figma bundled fonts) the nearest installed weig
   expect(mapFaceIn(FONT_ROWS, undefined, 'Arial', 400, true)).toMatchObject({typeface: 'Arial', i: 1, status: 'exact'});
 });
 
+test('localized fontconfig style aliases do not hide the English bold and italic flags', () => {
+  const rows: FontRow[] = [
+    {fams: ['Test Sans'], styles: ['Bold', 'Negrita', 'Lodia'], ps: 'TestSans-Bold', weight: 200},
+    {fams: ['Test Sans'], styles: ['Bold Italic', 'Negrita Cursiva', 'Lodi etzana'], ps: 'TestSans-BoldItalic', weight: 200},
+  ];
+  expect(mapFaceIn(rows, undefined, 'Test Sans', 700, false)).toMatchObject({ps: 'TestSans-Bold', b: 1, i: 0});
+  expect(mapFaceIn(rows, undefined, 'Test Sans', 700, true)).toMatchObject({ps: 'TestSans-BoldItalic', b: 1, i: 1});
+});
+
 test('a family that is not installed is reported missing', () => {
   expect(mapFaceIn(FONT_ROWS, 'Nope-Bold', 'Nope', 700, false)).toMatchObject({typeface: 'Nope', b: 1, status: 'missing'});
 });

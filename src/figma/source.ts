@@ -4,6 +4,7 @@
 //   file.json          pages and their top-level frames (sections expanded), with the file's version
 //   nodes/<id>.json    one frame's node tree
 //   svg/<id>.svg       one frame's SVG export (embedded bitmaps stripped: they are never read)
+//   outlined-text/<id>.svg and <id>@<s>.png  tight outlined text plus its PNG fallback
 //   raster/<id>@<s>.png  renders of nodes that become pictures, plus derived slide copies and blur plates
 //   figpdf/<id>.pdf    Figma's own PDF of a frame (benchmark reference only)
 // Every run asks Figma for the file's current version (one small request), so a changed file is never served
@@ -91,7 +92,31 @@ export class FigmaFile implements FrameSource {
   svg(id: string) { return readFileSync(join(this.dir, 'svg', fileName(id) + '.svg'), 'utf8'); }
 
   rasterFile(id: string, scale: number) { const p = join(this.dir, 'raster', `${fileName(id)}@${scale}`); return existsSync(p + '.jpg') ? p + '.jpg' : p + '.png'; }
+  outlinedTextFile(id: string) { return join(this.dir, 'outlined-text', fileName(id) + '.svg'); }
+  outlinedTextFallbackFile(id: string, scale: number) { return join(this.dir, 'outlined-text', `${fileName(id)}@${scale}.png`); }
   platePath(id: string, scale: number) { return join(this.dir, 'raster', `plate-${fileName(id)}@${scale}.png`); }
+
+  async ensureOutlinedText(ids: string[], scale: number) {
+    if (!ids.length) return;
+    const dir = join(this.dir, 'outlined-text'); mkdirSync(dir, {recursive: true});
+    const need = ids.filter(id => !existsSync(this.outlinedTextFile(id)));
+    for (const chunk of chunks(need, 4)) {
+      const j = await this.need().get(`images/${this.meta.fileKey}?ids=${chunk.join(',')}&format=svg&svg_outline_text=true&svg_include_node_id=true&svg_simplify_stroke=false`);
+      await Promise.all(chunk.map(async id => {
+        if (!j.images[id]) throw Error(`Figma could not outline text node ${id}`);
+        const s = new TextDecoder().decode(await this.need().download(j.images[id]));
+        writeFileSync(this.outlinedTextFile(id), s.replace(/xlink:href="data:[^"]{200,}"/g, 'xlink:href="data:stripped"').replace(/href="data:[^"]{200,}"/g, 'href="data:stripped"'));
+      }));
+    }
+    const needPng = ids.filter(id => !existsSync(this.outlinedTextFallbackFile(id, scale)));
+    for (const chunk of chunks(needPng, 10)) {
+      const j = await this.need().get(`images/${this.meta.fileKey}?ids=${chunk.join(',')}&format=png&scale=${scale}`);
+      await Promise.all(chunk.map(async id => {
+        if (!j.images[id]) throw Error(`Figma could not render outlined text fallback ${id}`);
+        writeFileSync(this.outlinedTextFallbackFile(id, scale), await this.need().download(j.images[id]));
+      }));
+    }
+  }
 
   // Always PNG: an image fill can carry alpha; opaque renders become JPEG when placed.
   async ensureRasters(ids: string[], scale: number) {

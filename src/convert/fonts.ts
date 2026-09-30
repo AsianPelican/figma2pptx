@@ -22,6 +22,9 @@ export interface FontResolver {
   mapFace(ps: string | null | undefined, family: string, weight: number, italic: boolean): Face;
   // Advance of the space glyph in em, in the installed font file PowerPoint will use.
   spaceEm(ps: string): number;
+  // Whether the resolved static face contains this Unicode code point. PowerPoint silently chooses a
+  // platform fallback when it does not, which can change both the glyph and the line width.
+  hasGlyph(face: Face, codePoint: number): boolean;
 }
 
 const cssWeightToFc: Record<number, number> = {100: 0, 200: 40, 300: 50, 400: 80, 500: 100, 600: 180, 700: 200, 800: 205, 900: 210};
@@ -46,8 +49,10 @@ export function mapFaceIn(rows: FontRow[], ps: string | null | undefined, family
       note: variableOnly ? `${family} is installed only as a variable font, which PowerPoint cannot render by weight; install its static faces` : `${ps || family} not installed`,
     };
   }
-  const fam = r.fams[r.fams.length - 1], sty = r.styles[r.styles.length - 1];
-  return {typeface: fam, b: /Bold/i.test(sty) ? 1 : 0, i: /Italic|Oblique/i.test(sty) ? 1 : 0, ps: r.ps, status, note, file: r.file, index: r.index};
+  const fam = r.fams[r.fams.length - 1];
+  // fontconfig returns localized style names after the English one on macOS. Inspect the full list so an
+  // English "Bold"/"Italic" marker is not lost merely because the final localized label differs.
+  return {typeface: fam, b: r.styles.some(s => /\bBold\b/i.test(s)) ? 1 : 0, i: r.styles.some(s => /\b(?:Italic|Oblique)\b/i.test(s)) ? 1 : 0, ps: r.ps, status, note, file: r.file, index: r.index};
 }
 
 export function parseFcList(out: string): FontRow[] {
@@ -65,7 +70,15 @@ export function parseFcList(out: string): FontRow[] {
 export function fontconfigResolver(): FontResolver {
   let rows: FontRow[] | null = null;
   const spaceCache = new Map<string, number>();
+  const fontCache = new Map<string, mu.Font | null>();
   const load = () => rows ??= parseFcList(execFileSync('fc-list', ['--format', '%{family}|%{style}|%{postscriptname}|%{weight}|%{variable}|%{index}|%{file}\n'], {encoding: 'utf8', maxBuffer: 64e6}));
+  const font = (face: Face): mu.Font | null => {
+    const key = `${face.file || ''}|${face.index || 0}|${face.ps}`;
+    if (fontCache.has(key)) return fontCache.get(key)!;
+    let f: mu.Font | null = null;
+    try { if (face.file) f = new mu.Font(face.ps || face.typeface, readFileSync(face.file)); } catch {}
+    fontCache.set(key, f); return f;
+  };
   return {
     mapFace: (ps, family, weight, italic) => mapFaceIn(load(), ps, family, weight, italic),
     spaceEm(ps) {
@@ -77,5 +90,6 @@ export function fontconfigResolver(): FontResolver {
       } catch {}
       spaceCache.set(ps, em); return em;
     },
+    hasGlyph(face, codePoint) { return (font(face)?.encodeCharacter(codePoint) || 0) !== 0; },
   };
 }

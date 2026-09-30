@@ -3,7 +3,7 @@
 // non-linear, quantized way; measuring it is simpler and more exact than modelling it.
 import {pdfLines} from './pdflines';
 import type {BuildReport, Corrections} from '../convert/build';
-import {placeLines, type Placement} from './placement';
+import {placeLines, referenceLine, type Placement} from './placement';
 
 export type Measurement = {
   corr: Corrections;
@@ -30,7 +30,7 @@ export function measure(pdf: Uint8Array, report: Pick<BuildReport, 'frames' | 't
     const page = frames.indexOf(lines[0].frame);
     const p0 = prev[node] || {dx: 0, dy: 0};
     const dys: number[] = [], dxs: number[] = [];
-    const observed = placeLines(lines.map(l => ({t: l.t, x: l.x, y: l.base, node: l.node, size: l.size, ignoreX: l.ignoreX ?? /^\s/.test(l.t), rotated: l.rotated})), linesOf(page));
+    const observed = placeLines(lines.map(referenceLine), linesOf(page));
     placements.push(...observed);
     for (const p of observed) {
       if (p.status !== 'placed') continue;

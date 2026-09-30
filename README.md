@@ -40,7 +40,6 @@ Useful options:
 --single-pass             skip measurement (PowerPoint is not needed unless --pdf)
 --offline                 use only the local Figma cache
 --cache <dir>             choose the cache directory
---no-embed-fonts          leave installed fonts external
 --allow-font-fallback     continue after an explicit font substitution warning
 --timings                 print every stage's wall time
 ```
@@ -73,7 +72,7 @@ The result includes output paths, the slide count, per-stage timings, font/build
 1. Fetches the file tree, live-text SVG for each frame, and PNGs only for elements PowerPoint cannot draw.
 2. Writes editable text with Figma's fixed line breaks, native DrawingML vectors, and raster fallbacks for unsupported effects.
 3. Maps each Figma weight/style to a static installed face PowerPoint can select. Missing, substituted, and variable-only faces fail preflight by default.
-4. Embeds each permitted static face as EOT according to the font's OpenType embedding flags.
+4. Leaves fonts external in every export; no commercial font files are bundled or embedded.
 5. Exports pass 1 with PowerPoint, measures every extractable line, applies per-text-box corrections, and exports pass 2.
 6. Optionally optimizes the PDF and validates that resampling did not alter non-photo content.
 
@@ -83,7 +82,7 @@ Figma responses and renders live under `cache/`; conversion outputs belong under
 
 - Line breaks are locked for fidelity. Editing does not reflow paragraphs automatically.
 - Shadows, masks, photo fills, angular/radial gradients, clipping frames, and dense decorative groups are rasterized.
-- Fonts are not embedded when their OpenType licence flags forbid embedding. Fonts also need a static installed face for PowerPoint's own render pass; variable-only installations fail preflight.
+- Fonts are never embedded. Fonts need a static installed face for PowerPoint's render pass; variable-only installations fail preflight.
 - PowerPoint for Mac is required for measured pass 2 and PDF output. `--single-pass` can build the PPTX without it.
 - Semi-transparent or rotated live text may be rasterized by PowerPoint's PDF exporter, so the report lists those lines as unmeasurable instead of claiming a placement pass.
 - Reflowable text, font installation, and downstream presentation-pipeline integration are follow-ups.
@@ -101,21 +100,11 @@ bun run bench out/deck.pdf \
 
 It reports pixel difference, exact line breaks, the prior 0.75 pt comparison, the prototype-compatible one-pixel count, the corrected per-line one-pixel result, worst-case offset, and each unmeasurable or failing line by slide and cause. Add `--diffs out/diffs` for heat maps. Benchmark outputs are gitignored.
 
-A warm-cache, 14-slide, two-pass baseline on the development Mac measured:
+The committed test fixture is synthetic and network-free. `bun test` checks SVG-to-DrawingML geometry, line mapping, tracking/centring corrections, font selection, progress behavior, PowerPoint safety decisions, and byte-stable golden PPTX output.
 
-| Stage | Seconds |
-| --- | ---: |
-| Build pass 1 | 4.50 |
-| PowerPoint export pass 1 | 132.01 |
-| Measure pass 1 | 0.21 |
-| Build pass 2 | 4.39 |
-| PowerPoint export pass 2 | 6.67 |
-| Final placement check | 0.12 |
-| Total | 147.90 |
+## Figma Desktop plugin
 
-The first PowerPoint export includes that application's one-time startup/render warm-up; the second export is the useful steady-state comparison. This is a fidelity baseline, not a speed claim. On this run all 326 measurable lines were within one Figma pixel after pass 2, with a worst offset of 0.83 px; eight other reference lines were named as unmeasurable by the independent benchmark.
-
-The committed test fixture is synthetic and network-free. `bun test` checks SVG-to-DrawingML geometry, line mapping, tracking/centring corrections, font selection and embedding, progress behavior, PowerPoint safety decisions, and byte-stable golden PPTX output.
+The [plugin setup guide](plugin/README.md) covers the authenticated bridge, local plugin build, and one-time pairing. No bridge secret or Figma token ships with the plugin: each bridge installation generates its own random secret outside the repository.
 
 ## Development
 

@@ -1,9 +1,11 @@
 // The command line: plain line-per-stage progress when stderr is not a terminal, a spinner when it is, and a
 // one-line summary at the end.
 import {test, expect} from 'bun:test';
-import {rmSync, existsSync} from 'node:fs';
+import {rmSync, existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {unzipSync, strFromU8} from 'fflate';
 import {convertFigma, FontPreflightError} from '../src/pipeline';
+import {parseArgs} from '../src/cli/main';
 import {FIXTURE_KEY, fixtureCacheCopy, fakeImages, tableFonts} from './helpers';
 
 const CLI = join(import.meta.dir, '../src/cli.ts');
@@ -18,7 +20,7 @@ test('non-TTY: a timestamped line per stage and step, the font table, timings, a
   const cache = fixtureCacheCopy();
   try {
     const out = join(cache, 'out', 'deck.pptx');
-    const r = await run([FIXTURE_KEY, '--page', 'Slides', '--offline', '--cache', cache, '--single-pass', '--no-embed-fonts', '--allow-font-fallback', '--timings', '-o', out]);
+    const r = await run([FIXTURE_KEY, '--page', 'Slides', '--offline', '--cache', cache, '--single-pass', '--allow-font-fallback', '--timings', '-o', out]);
     expect(r.code).toBe(0);
     expect(r.err).not.toContain('\x1b');
     const lines = r.err.trimEnd().split('\n');
@@ -30,7 +32,7 @@ test('non-TTY: a timestamped line per stage and step, the font table, timings, a
       'building: renders from Figma (1 nodes)',
       'building: slide 1/2',
       'building: slide 2/2',
-      'checking fonts', // no 'embedding fonts' step: --no-embed-fonts
+      'checking fonts',
     ]);
     expect(lines.some(l => /^\s+(ok|SUBST|MISS)\s+ArialMT -> Arial/.test(l))).toBe(true);
     expect(lines.some(l => /^\s+timings:$/.test(l))).toBe(true);
@@ -55,6 +57,19 @@ test('usage errors exit 2; --help and --version print to stdout', async () => {
   expect(h.code).toBe(0);
   expect(h.out).toContain('figma2pptx <figma-url | file-key> [frame ...]');
   expect((await run(['--version'])).out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+});
+
+test('font embedding is unavailable and generated decks contain no font payloads', async () => {
+  expect(() => parseArgs(['--embed-fonts'])).toThrow('unknown option --embed-fonts');
+  expect(() => parseArgs(['--no-embed-fonts'])).toThrow('unknown option --no-embed-fonts');
+  const cache = fixtureCacheCopy();
+  try {
+    const r = await convertFigma({target: FIXTURE_KEY, page: 'Slides', out: join(cache, 'plain.pptx'), passes: 1, offline: true, cacheDir: cache, fonts: tableFonts(), images: fakeImages});
+    const zip = unzipSync(readFileSync(r.pptx));
+    expect(Object.keys(zip).filter(k => k.startsWith('ppt/fonts/'))).toEqual([]);
+    expect(strFromU8(zip['ppt/presentation.xml'])).not.toContain('<p:embeddedFontLst>');
+    expect(strFromU8(zip['ppt/presentation.xml'])).not.toContain('embedTrueTypeFonts');
+  } finally { rmSync(cache, {recursive: true, force: true}); }
 });
 
 const progressScript = (tty: boolean) => `

@@ -1,4 +1,8 @@
 node_modules/
+# Algorithm working records stay local and are never published
+ISA.md
+**/ISA.md
+.local-audit/
 # Figma responses and renders: client content, never committed
 cache/
 # conversion outputs and benchmark artefacts
@@ -13,3 +17,7 @@ bench-results/
 .env.*
 .DS_Store
 *.tsbuildinfo
+plugin/local/
+# Legacy generated names from pre-0.2 client builds
+plugin/manifest.local.json
+plugin/dist/ui.html

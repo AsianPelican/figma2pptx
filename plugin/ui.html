@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>figma2pptx Export</title>
+  <style>
+    :root { color-scheme: light dark; font: 12px/1.45 Inter, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--figma-color-text, #f5f5f5); background: var(--figma-color-bg, #1e1e1e); }
+    main { display: grid; gap: 16px; padding: 20px; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 18px; letter-spacing: -0.02em; }
+    h2 { font-size: 11px; font-weight: 600; color: var(--figma-color-text-secondary, #b3b3b3); text-transform: uppercase; letter-spacing: .06em; }
+    .card { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--figma-color-border, #3d3d3d); border-radius: 8px; background: var(--figma-color-bg-secondary, #2c2c2c); }
+    .row { display: flex; align-items: center; gap: 8px; }
+    .grow { flex: 1; min-width: 0; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--figma-color-icon-tertiary, #808080); }
+    .dot.ok { background: #14ae5c; }
+    .dot.bad { background: #f24822; }
+    input { width: 100%; min-width: 0; height: 32px; padding: 0 9px; border: 1px solid var(--figma-color-border, #4d4d4d); border-radius: 5px; color: var(--figma-color-text, #f5f5f5); background: var(--figma-color-bg, #1e1e1e); outline: none; }
+    input:focus { border-color: var(--figma-color-border-brand, #0d99ff); box-shadow: inset 0 0 0 1px var(--figma-color-border-brand, #0d99ff); }
+    button { height: 32px; padding: 0 12px; border: 1px solid var(--figma-color-border, #4d4d4d); border-radius: 5px; color: var(--figma-color-text, #f5f5f5); background: var(--figma-color-bg, #1e1e1e); font: inherit; font-weight: 600; cursor: pointer; }
+    button.primary { width: 100%; height: 40px; border-color: var(--figma-color-bg-brand, #0d99ff); color: var(--figma-color-text-onbrand, #fff); background: var(--figma-color-bg-brand, #0d99ff); }
+    button:hover:not(:disabled) { filter: brightness(.96); }
+    button:disabled { cursor: default; opacity: .45; }
+    ol { max-height: 132px; margin: 0; padding: 0 0 0 24px; overflow: auto; }
+    li { padding: 3px 0; overflow-wrap: anywhere; }
+    .muted { color: var(--figma-color-text-secondary, #b3b3b3); }
+    .status { min-height: 48px; }
+    .progress { height: 4px; overflow: hidden; border-radius: 99px; background: var(--figma-color-bg-tertiary, #444); }
+    .bar { width: 0; height: 100%; background: var(--figma-color-bg-brand, #0d99ff); transition: width .2s ease; }
+    .bar.indeterminate { width: 35%; animation: loading 1.3s ease-in-out infinite; }
+    .outputs { display: none; gap: 8px; }
+    .output { display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; align-items: end; }
+    .output h2 { grid-column: 1 / -1; }
+    .path { padding: 7px 8px; border-radius: 4px; background: var(--figma-color-bg, #1e1e1e); font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: text; }
+    .error { color: var(--figma-color-text-danger, #ff7262); }
+    .hidden { display: none !important; }
+    @keyframes loading { from { transform: translateX(-120%); } to { transform: translateX(310%); } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Export to PowerPoint</h1>
+    <p class="muted">Native, editable PPTX + PDF from the bridge Mac.</p>
+  </header>
+
+  <section class="card">
+    <h2>Conversion bridge</h2>
+    <div class="row"><span id="bridgeDot" class="dot"></span><span id="bridgeLabel" class="grow muted">Not connected</span></div>
+    <div id="pairing" class="row hidden">
+      <input id="secret" type="password" autocomplete="off" spellcheck="false" placeholder="Paste bridge secret">
+      <button id="connect">Connect</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row"><h2 class="grow">Selected frames</h2><span id="count" class="muted">0</span></div>
+    <ol id="frames"><li class="muted">Select one or more frames on the canvas.</li></ol>
+  </section>
+
+  <section class="card status">
+    <div class="row"><strong id="stage" class="grow">Ready</strong><span id="elapsed" class="muted">0.0s</span></div>
+    <div class="progress"><div id="bar" class="bar"></div></div>
+    <p id="step" class="muted">Connect the bridge, then export your selection.</p>
+    <div id="outputs" class="outputs">
+      <div class="output"><h2>PowerPoint</h2><div id="pptxPath" class="path"></div><button id="downloadPptx" disabled>Download</button></div>
+      <div class="output"><h2>PDF</h2><div id="pdfPath" class="path"></div><button id="downloadPdf" disabled>Download</button></div>
+    </div>
+  </section>
+
+  <button id="export" class="primary" disabled>Export selected frames</button>
+  <p id="exportReason" class="muted"></p>
+</main>
+<script>
+  /*__FIGMA2PPTX_SHA256__*/
+  /*__FIGMA2PPTX_RECONNECT__*/
+  const BRIDGE = '__FIGMA2PPTX_BRIDGE_ORIGIN__';
+  const CONFIGURED = '__FIGMA2PPTX_IS_CONFIGURED__' === 'true';
+  const el = id => document.getElementById(id);
+  let state = {request: {fileKey: '', frameIds: [], frameNames: []}, bridgeSecret: '', activeJobId: ''};
+  let connected = false;
+  let running = false;
+  let completedOutputs = {};
+  let currentJobId = '';
+  let connectionStartedFor = '';
+
+  function setBridge(ok, message, tone = ok ? 'ok' : '') {
+    connected = ok;
+    el('bridgeDot').className = `dot${tone ? ` ${tone}` : ''}`;
+    el('bridgeLabel').textContent = message;
+    updateButton();
+  }
+
+  function showPairing(show) {
+    el('pairing').classList.toggle('hidden', !show);
+  }
+
+  function updateButton() {
+    const count = state.request.frameIds.length;
+    el('export').disabled = running || !connected || !state.request.fileKey || count === 0;
+    el('export').textContent = running ? 'Exporting…' : `Export ${count || ''} selected frame${count === 1 ? '' : 's'}`.replace('  ', ' ');
+    if (running) el('exportReason').textContent = currentJobId ? `Export job ${currentJobId} is running.` : 'Starting export…';
+    else if (!connected) el('exportReason').textContent = 'Export is disabled until the bridge is connected.';
+    else if (!state.request.fileKey) el('exportReason').textContent = 'Export is disabled because this development plugin cannot read the file key. Re-import its generated manifest.';
+    else if (!count) el('exportReason').textContent = 'Export is disabled because no top-level FRAME nodes are selected. Sections, groups, and components do not count.';
+    else el('exportReason').textContent = 'Ready to export the selected top-level frames.';
+  }
+
+  function saveActiveJob(jobId) {
+    currentJobId = jobId;
+    state.activeJobId = jobId;
+    parent.postMessage({pluginMessage: {type: 'save-active-job', jobId}}, '*');
+    updateButton();
+  }
+
+  function renderSelection() {
+    const list = el('frames');
+    list.replaceChildren();
+    state.request.frameNames.forEach(name => {
+      const item = document.createElement('li');
+      item.textContent = name;
+      list.appendChild(item);
+    });
+    if (!state.request.frameNames.length) {
+      const item = document.createElement('li');
+      item.className = 'muted';
+      item.textContent = 'Select one or more frames on the canvas.';
+      list.appendChild(item);
+    }
+    el('count').textContent = String(state.request.frameIds.length);
+    updateButton();
+  }
+
+  function requirePairing(message = 'Paste the bridge secret to pair this plugin.') {
+    connector.stop();
+    connected = false;
+    connectionStartedFor = '';
+    state.bridgeSecret = '';
+    showPairing(true);
+    parent.postMessage({pluginMessage: {type: 'save-secret', secret: ''}}, '*');
+    setBridge(false, message, 'bad');
+  }
+
+  function reconnect() {
+    if (!state.bridgeSecret) return requirePairing();
+    connected = false;
+    showPairing(false);
+    setBridge(false, 'Reconnecting…');
+    connector.retry();
+  }
+
+  const connector = figma2pptxCreateAutoConnector({
+    probe: async secret => {
+      const response = await fetch(`${BRIDGE}/v1/health`, {headers: {Authorization: `Bearer ${secret}`}});
+      let body = {};
+      try { body = await response.json(); } catch {}
+      return {
+        ok: response.ok,
+        unauthorized: response.status === 401,
+        busy: Boolean(body.busy),
+        error: body.error || `Bridge returned ${response.status}`,
+      };
+    },
+    onConnecting: () => {
+      connected = false;
+      showPairing(false);
+      setBridge(false, 'Connecting…');
+    },
+    onReconnecting: () => {
+      connected = false;
+      showPairing(false);
+      setBridge(false, 'Reconnecting…');
+    },
+    onConnected: result => {
+      connected = true;
+      showPairing(false);
+      setBridge(true, result.busy ? 'Connected · another export is running' : 'Connected');
+      if (currentJobId && !running) void reattachJob(currentJobId).finally(() => { running = false; updateButton(); });
+    },
+    onUnauthorized: () => requirePairing('Bridge secret rejected. Paste the current secret.'),
+  });
+
+  function startConnection(secret, save = false) {
+    if (!CONFIGURED) return setBridge(false, 'Plugin not configured. Build it and import plugin/local/manifest.json.', 'bad');
+    const value = secret.trim();
+    if (!value) return requirePairing();
+    state.bridgeSecret = value;
+    connectionStartedFor = value;
+    showPairing(false);
+    if (save) parent.postMessage({pluginMessage: {type: 'save-secret', secret: value}}, '*');
+    return connector.start(value);
+  }
+
+  function connect() {
+    const secret = el('secret').value.trim() || state.bridgeSecret;
+    el('secret').value = '';
+    void startConnection(secret, true);
+  }
+
+  function renderEvent(event) {
+    el('elapsed').textContent = `${Number(event.elapsed || 0).toFixed(1)}s`;
+    if (event.type === 'accepted' || event.type === 'progress') {
+      if (event.jobId && event.jobId !== currentJobId) saveActiveJob(event.jobId);
+      el('stage').textContent = event.stage;
+      el('step').textContent = event.slide > 0 ? `${event.step} · slide ${event.slide} of ${event.totalSlides}` : event.step;
+      const percent = event.slide > 0 ? (event.slide / event.totalSlides) * 100 : 0;
+      el('bar').className = `bar${percent ? '' : ' indeterminate'}`;
+      el('bar').style.width = percent ? `${percent}%` : '';
+    }
+    if (event.type === 'done') {
+      el('stage').textContent = 'Export complete';
+      el('step').textContent = `${event.slides} slide${event.slides === 1 ? '' : 's'} ready. Download both files to this Mac.`;
+      el('bar').className = 'bar';
+      el('bar').style.width = '100%';
+      completedOutputs = event.outputs;
+      el('pptxPath').textContent = `~/Downloads/${event.outputs.pptx.name}`;
+      el('pdfPath').textContent = event.outputs.pdf ? `~/Downloads/${event.outputs.pdf.name}` : 'Not requested';
+      el('downloadPptx').disabled = false;
+      el('downloadPdf').disabled = !event.outputs.pdf;
+      el('outputs').style.display = 'grid';
+      saveActiveJob('');
+    }
+    if (event.type === 'error') {
+      el('stage').textContent = 'Export stopped';
+      el('step').className = 'error';
+      el('step').textContent = event.error;
+      el('bar').className = 'bar';
+      el('bar').style.width = '0';
+      saveActiveJob('');
+    }
+    return event.type === 'done' || event.type === 'error';
+  }
+
+  async function reattachJob(jobId) {
+    saveActiveJob(jobId);
+    running = true;
+    updateButton();
+    el('stage').textContent = 'Export continues on bridge';
+    el('step').className = 'muted';
+    el('step').textContent = 'The progress connection was interrupted. Reconnecting by job ID…';
+    while (currentJobId === jobId) {
+      try {
+        const response = await fetch(`${BRIDGE}/v1/exports/${jobId}`, {headers: {Authorization: `Bearer ${state.bridgeSecret}`}});
+        const body = await response.json();
+        if (response.status === 401) {
+          requirePairing('Bridge secret rejected. Paste the current secret.');
+          return;
+        }
+        if (response.status === 404) {
+          renderEvent({type: 'error', jobId, error: body.error || `Cannot reattach to export job ${jobId}.`, elapsed: 0});
+          return;
+        }
+        if (!response.ok) throw Error(body.error || `Status returned ${response.status}`);
+        if (!connected) setBridge(true, 'Connected');
+        if (renderEvent(body)) return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === 'Failed to fetch') reconnect();
+        el('stage').textContent = 'Export continues on bridge';
+        el('step').className = 'muted';
+        el('step').textContent = message === 'Failed to fetch'
+          ? 'Reconnecting… The export is safe on the bridge.'
+          : `Cannot reattach yet: ${message}`;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  async function downloadOutput(kind) {
+    const output = completedOutputs[kind];
+    if (!output) return;
+    const button = el(kind === 'pptx' ? 'downloadPptx' : 'downloadPdf');
+    button.disabled = true;
+    button.textContent = 'Checking…';
+    try {
+      const response = await fetch(`${BRIDGE}${output.downloadPath}`, {headers: {Authorization: `Bearer ${state.bridgeSecret}`}});
+      if (response.status === 401) {
+        requirePairing('Bridge secret rejected. Paste the current secret.');
+        throw Error('Bridge secret rejected.');
+      }
+      if (!response.ok) throw Error(`Download returned ${response.status}`);
+      const bytes = await response.arrayBuffer();
+      const digest = await figma2pptxSha256Hex(bytes);
+      if (bytes.byteLength !== output.size || digest !== output.sha256) throw Error('Downloaded file did not match the bridge. Retry.');
+      const url = URL.createObjectURL(new Blob([bytes]));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = output.name;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      button.textContent = 'Downloaded';
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = 'Retry';
+      const message = error instanceof Error ? error.message : String(error);
+      el('step').className = message === 'Failed to fetch' ? 'muted' : 'error';
+      if (message === 'Failed to fetch') reconnect();
+      el('step').textContent = message === 'Failed to fetch'
+        ? 'Reconnecting… Your export is safe on the bridge; click Retry when connected.'
+        : message;
+    }
+  }
+
+  async function exportSelection() {
+    running = true;
+    completedOutputs = {};
+    el('outputs').style.display = 'none';
+    el('downloadPptx').disabled = true;
+    el('downloadPdf').disabled = true;
+    el('downloadPptx').textContent = 'Download';
+    el('downloadPdf').textContent = 'Download';
+    el('step').className = 'muted';
+    updateButton();
+    try {
+      const response = await fetch(`${BRIDGE}/v1/exports`, {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${state.bridgeSecret}`, 'Content-Type': 'application/json'},
+        body: JSON.stringify(state.request),
+      });
+      if (!response.ok) {
+        const body = await response.json();
+        if (response.status === 401) requirePairing('Bridge secret rejected. Paste the current secret.');
+        throw Error(body.error || `Bridge returned ${response.status}`);
+      }
+      if (!response.body) throw Error('Bridge returned no progress stream.');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = '', terminal = false;
+      while (true) {
+        const {done, value} = await reader.read();
+        pending += decoder.decode(value, {stream: !done});
+        const lines = pending.split('\n');
+        pending = lines.pop() || '';
+        for (const line of lines) if (line.trim()) terminal = renderEvent(JSON.parse(line)) || terminal;
+        if (done) break;
+      }
+      if (pending.trim()) terminal = renderEvent(JSON.parse(pending)) || terminal;
+      if (!terminal && currentJobId) await reattachJob(currentJobId);
+    } catch (error) {
+      if (currentJobId) await reattachJob(currentJobId);
+      else {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === 'Failed to fetch') {
+          reconnect();
+          el('stage').textContent = 'Waiting for bridge';
+          el('step').className = 'muted';
+          el('step').textContent = 'Reconnecting… Run the export again when the bridge is connected.';
+        } else renderEvent({type: 'error', jobId: '', error: message, elapsed: 0});
+      }
+    } finally {
+      running = false;
+      updateButton();
+    }
+  }
+
+  window.onmessage = event => {
+    const message = event.data.pluginMessage;
+    if (!message || message.type !== 'state') return;
+    state = message;
+    currentJobId = state.activeJobId || currentJobId;
+    renderSelection();
+    if (state.bridgeSecret) {
+      showPairing(false);
+      if (!connected && connectionStartedFor !== state.bridgeSecret) void startConnection(state.bridgeSecret);
+      else if (connected && currentJobId && !running) void reattachJob(currentJobId).finally(() => { running = false; updateButton(); });
+    } else {
+      connector.stop();
+      connectionStartedFor = '';
+      connected = false;
+      showPairing(true);
+      setBridge(false, 'Paste the bridge secret to pair this plugin.');
+    }
+  };
+  el('connect').onclick = () => void connect();
+  el('secret').onkeydown = event => { if (event.key === 'Enter') void connect(); };
+  if (!CONFIGURED) {
+    showPairing(true);
+    el('secret').disabled = true;
+    el('connect').disabled = true;
+    setBridge(false, 'Plugin not configured. Build it and import plugin/local/manifest.json.');
+  }
+  el('export').onclick = () => void exportSelection();
+  el('downloadPptx').onclick = () => void downloadOutput('pptx');
+  el('downloadPdf').onclick = () => void downloadOutput('pdf');
+</script>
+</body>
+</html>

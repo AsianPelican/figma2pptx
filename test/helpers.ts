@@ -18,9 +18,10 @@ export const FONT_ROWS: FontRow[] = [
 ];
 export const SPACE_EM: Record<string, number> = {'ArialMT': 0.27783, 'Arial-BoldMT': 0.27783};
 
-export const tableFonts = (rows = FONT_ROWS): FontResolver => ({
+export const tableFonts = (rows = FONT_ROWS, missing: number[] = []): FontResolver => ({
   mapFace: (ps, family, weight, italic) => mapFaceIn(rows, ps, family, weight, italic),
   spaceEm: ps => SPACE_EM[ps] ?? 0.25,
+  hasGlyph: (_face, codePoint) => !missing.includes(codePoint),
 });
 
 // Sizes come from the file header; nothing is opaque, so no pixels are ever rewritten.

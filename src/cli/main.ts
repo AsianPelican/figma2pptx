@@ -23,7 +23,6 @@ Options:
   --pdf                     also write <out>.pdf: PowerPoint's export, size-optimized and render-gated
   --pdf-preset <preset>     screen (default), standard, print, or raw (PowerPoint's export untouched)
   --single-pass             skip the measured second pass (no PowerPoint needed unless --pdf)
-  --no-embed-fonts          do not embed the fonts the deck uses
   --allow-font-fallback     convert even when a font is missing, variable-only or substituted
   --offline                 use cached Figma data only; no network
   --cache <dir>             Figma cache (default: <repo>/cache, or $FIGMA2PPTX_CACHE)
@@ -36,10 +35,10 @@ Options:
 The Figma token is read from the FIGMA_TOKEN environment variable and is never logged or cached.
 `;
 
-export type Args = {positional: string[], out?: string, page?: string, pdf: boolean, pdfPreset: PdfPreset, singlePass: boolean, embedFonts: boolean, allowFontFallback: boolean, offline: boolean, cache: string, scale: number, kern: string, corr?: string, timings: boolean, help: boolean, version: boolean};
+export type Args = {positional: string[], out?: string, page?: string, pdf: boolean, pdfPreset: PdfPreset, singlePass: boolean, allowFontFallback: boolean, offline: boolean, cache: string, scale: number, kern: string, corr?: string, timings: boolean, help: boolean, version: boolean};
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = {positional: [], pdf: false, pdfPreset: 'screen', singlePass: false, embedFonts: true, allowFontFallback: false, offline: false, cache: process.env.FIGMA2PPTX_CACHE || join(ROOT, 'cache'), scale: 2, kern: '100', timings: false, help: false, version: false};
+  const a: Args = {positional: [], pdf: false, pdfPreset: 'screen', singlePass: false, allowFontFallback: false, offline: false, cache: process.env.FIGMA2PPTX_CACHE || join(ROOT, 'cache'), scale: 2, kern: '100', timings: false, help: false, version: false};
   const value = (i: number, k: string) => { const v = argv[i + 1]; if (v === undefined || v.startsWith('--')) throw Error(`${k} needs a value`); return v; };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
@@ -49,7 +48,6 @@ export function parseArgs(argv: string[]): Args {
       case '--pdf': a.pdf = true; break;
       case '--pdf-preset': a.pdfPreset = value(i++, k) as PdfPreset; a.pdf = true; break;
       case '--single-pass': a.singlePass = true; break;
-      case '--no-embed-fonts': a.embedFonts = false; break;
       case '--allow-font-fallback': a.allowFontFallback = true; break;
       case '--offline': a.offline = true; break;
       case '--cache': a.cache = resolve(value(i++, k)); break;
@@ -85,7 +83,7 @@ async function run(a: Args, p: Progress): Promise<string> {
   if (!a.positional.length) throw Error('missing the Figma URL or file key (see --help)');
   const r = await convertFigma({
     target: a.positional[0], frames: a.positional.slice(1), page: a.page, out: a.out,
-    pdf: a.pdf ? a.pdfPreset : false, passes: a.singlePass ? 1 : 2, embedFonts: a.embedFonts, allowFontFallback: a.allowFontFallback,
+    pdf: a.pdf ? a.pdfPreset : false, passes: a.singlePass ? 1 : 2, allowFontFallback: a.allowFontFallback,
     offline: a.offline, cacheDir: a.cache, scale: a.scale, kern: a.kern, corr: a.corr ? JSON.parse(readFileSync(a.corr, 'utf8')) : undefined,
     onProgress,
   });

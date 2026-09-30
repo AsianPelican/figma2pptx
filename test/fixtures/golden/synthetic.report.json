@@ -48,20 +48,6 @@
    "status": "exact"
   }
  ],
- "embeddedFonts": [
-  {
-   "typeface": "Arial",
-   "slot": "bold",
-   "embedded": false,
-   "reason": "font file unknown"
-  },
-  {
-   "typeface": "Arial",
-   "slot": "regular",
-   "embedded": false,
-   "reason": "font file unknown"
-  }
- ],
  "textLines": [
   {
    "node": "1:7",
@@ -161,6 +147,7 @@
    "base": 120.8,
    "align": "r",
    "size": 22,
+   "unmeasurableReason": "PowerPoint PDF rasterizes text with opacity below 100%",
    "frame": "1:40"
   }
  ],

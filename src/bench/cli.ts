@@ -23,7 +23,7 @@ import {tmpdir} from 'node:os';
 import {DOMParser} from '@xmldom/xmldom';
 import {pdfLines, pageCount} from '../measure/pdflines';
 import {compare} from './lines1to1';
-import {placeLines, normalizeLine, type ReferenceLine} from '../measure/placement';
+import {placeLines, normalizeLine, referenceLine, type ReferenceLine} from '../measure/placement';
 import {FigmaClient, readToken} from '../figma/api';
 import {FigmaFile} from '../figma/source';
 
@@ -86,7 +86,7 @@ try {
     if (Array.isArray(R.textLines)) {
       // The conversion report records the transformed slide-space coordinates used to build the deck. Prefer
       // those to raw SVG x/y, which omit a parent transform on some Figma exports.
-      figLines = R.textLines.filter((l: any) => l.frame === FRAMES[i]).map((l: any) => ({t: l.t, x: l.x, y: l.base, node: l.node, size: l.size, ignoreX: l.ignoreX ?? /^\s/.test(l.t), rotated: l.rotated}));
+      figLines = R.textLines.filter((l: any) => l.frame === FRAMES[i]).map(referenceLine);
     } else figLines = raw;
     const P = pdfLines(readFileSync(pdf), i, 1 / 0.75);
     // Keep the prototype's original 319/334 metric byte-for-byte comparable. The richer placement result below

@@ -13,33 +13,38 @@ import {readFileSync, existsSync} from 'node:fs';
 import {buildPptx, slideXml, esc, EMU_PER_PX as E, REL_IMAGE, type Media, type Slide} from './pptx';
 import {parseTransform, parsePath, transformSegs, bbox, groupForFill, custGeom, rectPath, ellipsePath, mul, scaleOf, I, type Mat} from './geom';
 import {paint} from './paint';
-import {textShape, type LineRecord} from './text';
+import {alignLines, collectSegs, groupLines, textShape, type LineRecord} from './text';
 import type {Face, FaceStatus, FontResolver} from './fonts';
-import {embedFaces, type EmbedResult} from './embed';
 import type {ImageOps} from './images';
+import {textTransformPlan, transformStyle, type TextTransformOptions, type TextTransformPlan} from './text-transform';
 
 export interface FrameSource {
   document(frameId: string): any; // the frame's node JSON (`nodes[id].document` of /v1/files/:key/nodes)
   svg(frameId: string): string; // svg_outline_text=false, svg_include_node_id=true, svg_simplify_stroke=false
   ensureRasters(ids: string[], scale: number): Promise<void>; // PNG renders, use_absolute_bounds=true
   rasterFile(id: string, scale: number): string;
+  ensureOutlinedText(ids: string[], scale: number): Promise<void>; // SVG paths plus PNG fallback, tight bounds
+  outlinedTextFile(id: string): string;
+  outlinedTextFallbackFile(id: string, scale: number): string;
   platePath(id: string, scale: number): string; // where to write a derived blur plate
 }
 
 export type Corrections = Record<string, {dx: number, dy: number}>;
-export type BuildOptions = {scale: number, kern: string, corr: Corrections, embedFonts?: boolean, progress?: (step: string) => void};
+export type BuildOptions = {scale: number, kern: string, corr: Corrections, textTransform?: TextTransformOptions, progress?: (step: string) => void};
 export type BuildEnv = {fonts: FontResolver, images: ImageOps};
-export type FrameStats = {id: string, name: string, text: number, shapes: number, rasters: number, plates: number, rasterText: number};
+export type FrameStats = {id: string, name: string, text: number, shapes: number, rasters: number, plates: number, rasterText: number, textTransform?: {outlinedRuns: number, substitutedRuns: number}};
 export type BuildReport = {
   frames: FrameStats[];
   warnings: string[];
   fonts: Record<string, string>; // Figma face -> PowerPoint typeface (+b/+i) and any substitution note
   faces: {figma: string, typeface: string, b: 0 | 1, i: 0 | 1, status: FaceStatus, note?: string}[];
-  embeddedFonts: EmbedResult[];
   textLines: (LineRecord & {frame: string})[];
   rasters: Record<string, string>; // node id -> why it is a picture
   blurPanels: string[];
+  missingGlyphs?: {frame: string, node: string, name: string, index: number, char: string, codePoint: string, sourceFace: string, typeface: string, action: 'figma-vector-outline'}[];
 };
+
+type MissingGlyphPlan = {index: number, char: string, advance: number, left: number, right: number};
 
 const vis = (p: any) => p.visible !== false;
 const count = (n: any): number => 1 + (n.children || []).reduce((a: number, c: any) => a + count(c), 0);
@@ -60,7 +65,7 @@ export function rasterReason(n: any, isRoot: boolean): string | null {
 
 export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildOptions, env: BuildEnv): Promise<{pptx: Uint8Array, report: BuildReport}> {
   const SCALE = opts.scale, CORR = opts.corr, KERN = opts.kern;
-  const report: BuildReport = {frames: [], warnings: [], fonts: {}, faces: [], embeddedFonts: [], textLines: [], rasters: {}, blurPanels: []};
+  const report: BuildReport = {frames: [], warnings: [], fonts: {}, faces: [], textLines: [], rasters: {}, blurPanels: []};
   const faces = new Map<string, Face>();
   const warn = (s: string) => { if (!report.warnings.includes(s)) report.warnings.push(s); };
 
@@ -68,6 +73,12 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
   const NODES: Record<string, {document: any}> = Object.fromEntries(FRAMES.map(f => [f, {document: src.document(f)}]));
   const byId = new Map<string, any>(), parentOf = new Map<string, any>();
   for (const f of FRAMES) (function idx(n: any, p: any) { byId.set(n.id, n); if (p) parentOf.set(n.id, p); for (const c of n.children || []) idx(c, n); })(NODES[f].document, null);
+  const effectivelyVisible = (n: any) => {
+    while (n) { if (!vis(n)) return false; n = parentOf.get(n.id); }
+    return true;
+  };
+  const textPlans = new Map<string, TextTransformPlan>();
+  if (opts.textTransform) for (const n of byId.values()) if (n.type === 'TEXT' && effectivelyVisible(n)) textPlans.set(n.id, textTransformPlan(n, opts.textTransform));
 
   // ---------- 2. decide what must be raster ----------
   const raster = new Map<string, string>(); // node id -> reason (raster roots)
@@ -89,6 +100,7 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
   const nextEl = (el: any) => { let s = el.nextSibling; while (s && s.nodeType !== 1) s = s.nextSibling; return s; };
   // SVG safety net: anything Figma had to express with clip-path, mask, filter or foreignObject is raster too.
   const svgDocs = new Map<string, any>();
+  const svgText = new Map<string, {frame: string, el: any, m: Mat}>();
   for (const f of FRAMES) {
     const doc = new DOMParser().parseFromString(src.svg(f), 'image/svg+xml') as any;
     svgDocs.set(f, doc);
@@ -101,8 +113,47 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
       for (const c of Array.from(el.childNodes || []) as any[]) if (c.tagName !== 'defs') walk(c, id, depth + 1);
     };
     walk(doc.documentElement, null, 0);
+    const indexText = (el: any, m: Mat, owner: string | null) => {
+      if (el.nodeType !== 1 || el.tagName === 'defs') return;
+      const id = el.getAttribute('data-node-id') || owner;
+      if (id && byId.get(id)?.type === 'TEXT') { if (!svgText.has(id)) svgText.set(id, {frame: f, el, m}); return; }
+      const m2 = el.tagName === 'g' ? mul(m, parseTransform(el.getAttribute('transform'))) : m;
+      for (const c of Array.from(el.childNodes || []) as any[]) indexText(c, m2, id);
+    };
+    indexText(doc.documentElement, I, null);
   }
   for (const [id, why] of raster) if (hasText(byId.get(id))) warn(`raster ${id} "${byId.get(id).name}" (${why}) contains text, which is baked into the image`);
+  const missingPlans = new Map<string, Map<number, MissingGlyphPlan>>();
+  for (const [id, found] of svgText) {
+    const n = byId.get(id);
+    if (!effectivelyVisible(n) || ancestorsIn(id, raster) || textPlans.get(id)?.outline) continue;
+    const lines = alignLines(groupLines(collectSegs(found.el, found.m, warn).segs), n, id, warn);
+    const render = n.absoluteRenderBounds || n.absoluteBoundingBox;
+    const frame = NODES[found.frame].document.absoluteBoundingBox;
+    const renderLeft = render.x - frame.x, renderRight = renderLeft + render.width;
+    for (const line of lines) for (const run of line.runs) {
+      const sourceStyle = run.style, mappedStyle = opts.textTransform ? transformStyle(sourceStyle, opts.textTransform).style : sourceStyle;
+      const face = env.fonts.mapFace(mappedStyle.fontPostScriptName, mappedStyle.fontFamily, mappedStyle.fontWeight, !!mappedStyle.italic);
+      let at = run.sourceStart!;
+      for (const char of run.t) {
+        const cp = char.codePointAt(0)!;
+        if (!/\s/u.test(char) && !env.fonts.hasGlyph(face, cp)) {
+          if (run.spanLength !== char.length || run.spanX === undefined) throw Error(`missing glyph U+${cp.toString(16).toUpperCase().padStart(4, '0')} in text ${id} is not isolated in Figma's SVG; split it into its own styled run so only that glyph can be outlined`);
+          const right = Math.min(renderRight, run.spanNextX ?? renderRight), advance = right - run.spanX;
+          if (advance <= 0 || render.width <= 0) throw Error(`missing glyph U+${cp.toString(16).toUpperCase().padStart(4, '0')} in text ${id} has no measurable Figma advance`);
+          const plan = {index: at, char, advance, left: Math.max(0, (run.spanX - renderLeft) / render.width), right: Math.min(1, (right - renderLeft) / render.width)};
+          const plans = missingPlans.get(id) || new Map<number, MissingGlyphPlan>(); plans.set(at, plan); missingPlans.set(id, plans);
+          (report.missingGlyphs ||= []).push({frame: found.frame, node: id, name: n.name, index: at, char, codePoint: `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`, sourceFace: sourceStyle.fontPostScriptName || sourceStyle.fontFamily, typeface: face.typeface, action: 'figma-vector-outline'});
+        }
+        at += char.length;
+      }
+    }
+  }
+  const outlinedText = [...new Set([...textPlans].filter(([, p]) => p.outline).map(([id]) => id).concat([...missingPlans.keys()]))];
+  for (const [id, plan] of textPlans) if (plan.outline) {
+    const owner = ancestorsIn(id, raster);
+    if (owner) throw Error(`outlined text node ${id} is inside rasterized node ${owner}; move the text outside that Figma effect group`);
+  }
 
   // ---------- 3. rasters ----------
   const frameOf = (id: string) => { let n = byId.get(id); while (parentOf.get(n.id)) n = parentOf.get(n.id); return n; };
@@ -125,6 +176,10 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
   await src.ensureRasters([...raster.keys()], SCALE);
   await src.ensureRasters([...new Set([...under.values()].flat())].filter(id => !raster.has(id)), SCALE);
   await src.ensureRasters([...new Set([...under.values()].flat())].filter(id => raster.has(id)), SCALE);
+  if (outlinedText.length) {
+    opts.progress?.(`outlined text from Figma (${outlinedText.length} nodes)`);
+    await src.ensureOutlinedText(outlinedText, SCALE);
+  }
   const rasterFile = (id: string) => src.rasterFile(id, SCALE);
 
   // ---------- 4. emit ----------
@@ -133,7 +188,8 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
   function addMedia(path: string): string {
     if (mediaByPath.has(path)) return mediaByPath.get(path)!;
     const ext = path.split('.').pop()!, name = `image${media.length + 1}.${ext}`;
-    media.push({name, data: readFileSync(path), ct: ext === 'jpg' ? 'image/jpeg' : 'image/png'});
+    const ct = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'svg' ? 'image/svg+xml' : 'image/png';
+    media.push({name, data: readFileSync(path), ct});
     mediaByPath.set(path, name); return name;
   }
 
@@ -145,10 +201,15 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
     const rels: Slide['rels'] = []; let body = '', sid = 2;
     const done = new Set<string>();
     const stats = {text: 0, shapes: 0, rasters: 0, plates: 0, rasterText: 0};
+    const transformStats = {outlinedRuns: 0, substitutedRuns: 0};
     const relFor = (path: string) => { const name = addMedia(path); let r = rels.find(x => x.target === `../media/${name}`); if (!r) { r = {id: `rId${rels.length + 1}`, type: REL_IMAGE, target: `../media/${name}`}; rels.push(r); } return r.id; };
     const ancOpacity = (id: string, includeSelf: boolean) => { let a = 1, n = includeSelf ? byId.get(id) : parentOf.get(id); while (n && n.id !== frameId) { a *= n.opacity ?? 1; n = parentOf.get(n.id); } return a; };
-    const pic = (name: string, path: string, x: number, y: number, w: number, h: number, alpha: number, geom = '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>') => {
-      body += `<p:pic><p:nvPicPr><p:cNvPr id="${sid++}" name="${esc(name)}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="${relFor(path)}">${alpha < 0.9995 ? `<a:alphaModFix amt="${Math.round(alpha * 100000)}"/>` : ''}</a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="${Math.round(x * E)}" y="${Math.round(y * E)}"/><a:ext cx="${Math.round(w * E)}" cy="${Math.round(h * E)}"/></a:xfrm>${geom}</p:spPr></p:pic>`;
+    const pic = (name: string, path: string, x: number, y: number, w: number, h: number, alpha: number, geom = '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>', svgPath?: string, crop?: {left: number, right: number}) => {
+      const fallbackRel = relFor(path);
+      const svg = svgPath ? `<a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}"><asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="${relFor(svgPath)}"/></a:ext></a:extLst>` : '';
+      const transparentShape = svgPath ? '<a:noFill/><a:ln><a:noFill/></a:ln>' : '';
+      const srcRect = crop ? `<a:srcRect l="${Math.round(crop.left * 100000)}" r="${Math.round((1 - crop.right) * 100000)}"/>` : '';
+      body += `<p:pic><p:nvPicPr><p:cNvPr id="${sid++}" name="${esc(name)}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="${fallbackRel}">${alpha < 0.9995 ? `<a:alphaModFix amt="${Math.round(alpha * 100000)}"/>` : ''}${svg}</a:blip>${srcRect}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="${Math.round(x * E)}" y="${Math.round(y * E)}"/><a:ext cx="${Math.round(w * E)}" cy="${Math.round(h * E)}"/></a:xfrm>${geom}${transparentShape}</p:spPr></p:pic>`;
     };
     // A node render covers the node unclipped (bounding box, grown by effects such as shadows); the REST render
     // bounds are clipped by the frame, so pick whichever box matches the rendered pixel size.
@@ -195,6 +256,15 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
       stats.plates++;
     }
 
+    function emitOutlinedText(id: string) {
+      const n = byId.get(id), fallback = src.outlinedTextFallbackFile(id, SCALE);
+      const [pw, ph] = env.images.size(fallback), w = pw / SCALE, h = ph / SCALE;
+      const b = n.absoluteRenderBounds || n.absoluteBoundingBox;
+      if (Math.abs(b.width - w) + Math.abs(b.height - h) > 2) warn(`outlined text ${id}: ${w}x${h} does not match its render bounds; placed at the render bounds origin`);
+      pic(n.name, fallback, b.x - F.x, b.y - F.y, w, h, ancOpacity(id, false), undefined, src.outlinedTextFile(id));
+      transformStats.outlinedRuns += textPlans.get(id)!.outlinedRuns;
+    }
+
     // --- vectors ---
     function emitVector(el: any, m: Mat, st: any, nodeId: string) {
       const tag = el.tagName; let d: string;
@@ -230,14 +300,24 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
 
     // --- text ---
     function emitText(el: any, m: Mat, nodeId: string, opacity: number) {
+      const glyphPlans = missingPlans.get(nodeId);
       const t = textShape(el, m, byId.get(nodeId), nodeId, opacity, sid, {
         frame: F, corr: CORR[nodeId] || {dx: 0, dy: 0}, kern: KERN, fonts: env.fonts, warn,
+        mapStyle: opts.textTransform ? style => transformStyle(style, opts.textTransform!) : undefined,
+        missingGlyphs: glyphPlans,
         onFace: (key, face) => { report.fonts[key] = `${face.typeface}${face.b ? ' +b' : ''}${face.i ? ' +i' : ''}${face.note ? ' (' + face.note + ')' : ''}`; faces.set(key, face); },
       });
       if (!t) return;
       sid++;
       body += t.xml;
+      if (glyphPlans) {
+        const n = byId.get(nodeId), fallback = src.outlinedTextFallbackFile(nodeId, SCALE), svg = src.outlinedTextFile(nodeId);
+        const [pw, ph] = env.images.size(fallback), fullW = pw / SCALE, fullH = ph / SCALE;
+        const b = n.absoluteRenderBounds || n.absoluteBoundingBox;
+        for (const plan of glyphPlans.values()) pic(`${n.name} ${plan.char} (outlined missing glyph)`, fallback, b.x - F.x + plan.left * fullW, b.y - F.y, (plan.right - plan.left) * fullW, fullH, ancOpacity(nodeId, false), undefined, svg, plan);
+      }
       report.textLines.push(...t.lines.map(r => ({...r, frame: frameId})));
+      transformStats.substitutedRuns += textPlans.get(nodeId)?.substitutedRuns || 0;
       stats.text++;
     }
 
@@ -259,7 +339,14 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
         if (rr) { if (!done.has(rr)) { done.add(rr); emitRaster(rr); } return; }
         const bl = ancestorsIn(id, blurMap());
         if (bl && !done.has('plate:' + bl)) { done.add('plate:' + bl); emitPlate(bl); }
-        if (byId.get(id)?.type === 'TEXT') { if (!done.has(id)) { done.add(id); emitText(el, mul(m, I), id, inherit(el, st).opacity); } return; }
+        if (byId.get(id)?.type === 'TEXT') {
+          if (!done.has(id)) {
+            done.add(id);
+            if (textPlans.get(id)?.outline) emitOutlinedText(id);
+            else emitText(el, mul(m, I), id, inherit(el, st).opacity);
+          }
+          return;
+        }
       }
       if (el.tagName === 'foreignObject') return;
       const st2 = inherit(el, st);
@@ -273,7 +360,7 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
       emitVector(el, m, st2, id!);
     }
     walk(doc.documentElement, I, {fill: 'black', stroke: null, strokeWidth: 1, dash: null, linecap: null, linejoin: null, fillRule: 'nonzero', fillOpacity: 1, strokeOpacity: 1, opacity: 1}, null);
-    report.frames.push({id: frameId, name: frame.name, ...stats});
+    report.frames.push({id: frameId, name: frame.name, ...stats, ...(opts.textTransform ? {textTransform: transformStats} : {})});
     return {xml: slideXml(body, frame.name), rels};
   }
 
@@ -281,10 +368,7 @@ export async function buildDeck(src: FrameSource, FRAMES: string[], opts: BuildO
   const box0 = NODES[FRAMES[0]].document.absoluteBoundingBox;
   for (const f of FRAMES.slice(1)) { const b = NODES[f].document.absoluteBoundingBox; if (Math.round(b.width) !== Math.round(box0.width) || Math.round(b.height) !== Math.round(box0.height)) warn(`frame ${f} is ${b.width}x${b.height}, the slide size comes from the first frame (${box0.width}x${box0.height})`); }
   report.faces = [...faces].map(([figma, f]) => ({figma, typeface: f.typeface, b: f.b, i: f.i, status: f.status, note: f.note}));
-  if (opts.embedFonts) opts.progress?.('embedding fonts');
-  const embed = opts.embedFonts ? embedFaces([...faces.values()]) : {fonts: [], results: []};
-  report.embeddedFonts = embed.results;
-  const pptx = buildPptx(slides, media, Math.round(box0.width), Math.round(box0.height), 'figma2pptx', embed.fonts);
+  const pptx = buildPptx(slides, media, Math.round(box0.width), Math.round(box0.height), 'figma2pptx');
   report.rasters = Object.fromEntries(raster); report.blurPanels = [...blurNodes];
   return {pptx, report};
 }

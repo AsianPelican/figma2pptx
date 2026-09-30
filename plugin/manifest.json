@@ -1,0 +1,15 @@
+{
+  "name": "figma2pptx Export",
+  "id": "figma2pptx-local",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "enablePrivatePluginApi": true,
+  "permissions": [],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "devAllowedDomains": ["https://bridge-host.invalid:38458"]
+  }
+}

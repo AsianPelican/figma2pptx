@@ -15,6 +15,7 @@ import {magickOps, type ImageOps} from './convert/images';
 import {exportPdf} from './powerpoint/export';
 import {measure, type Measurement} from './measure/corrections';
 import {optimizePdf, type OptimizeResult} from './pdf/optimize';
+import type {TextTransformOptions} from './convert/text-transform';
 
 // stage: a new step (with its own duration); step: progress inside the current stage; note: a line to keep.
 export type ProgressEvent = {type: 'stage' | 'step' | 'note', text: string};
@@ -27,7 +28,7 @@ export type ConvertOptions = {
   out?: string; // .pptx path; default ./<Figma file name>.pptx
   pdf?: PdfPreset | false;
   passes?: 1 | 2; // 2 (default): measured second pass through PowerPoint
-  embedFonts?: boolean; // default true
+  textTransform?: TextTransformOptions; // host-supplied policy; omitted by the public CLI
   allowFontFallback?: boolean; // default false: missing, variable-only or substituted fonts are an error
   offline?: boolean; // cached Figma data only
   token?: string; // default: readToken()
@@ -42,6 +43,14 @@ export type ConvertOptions = {
 };
 
 export type StageTiming = {stage: string, seconds: number};
+export type PlacementReport = {
+  totalLines: number;
+  measuredLines: number;
+  within1px: number;
+  unmeasurableLines: number;
+  maxOffsetPx: number;
+  failures: {frame?: string, node?: string, text: string, dx?: number, dy?: number, offsetPx?: number, cause: string}[];
+};
 
 export type ConvertResult = {
   timings: StageTiming[]; // wall time per stage, in order
@@ -49,14 +58,9 @@ export type ConvertResult = {
   slides: number; seconds: number; fileName: string;
   build: BuildReport;
   measurement?: Pick<Measurement, 'measured' | 'unmeasurable' | 'medianDy' | 'spreadMedian' | 'spreadMax'>;
-  placement?: {
-    totalLines: number;
-    measuredLines: number;
-    within1px: number;
-    unmeasurableLines: number;
-    maxOffsetPx: number;
-    failures: {frame?: string, node?: string, text: string, dx?: number, dy?: number, offsetPx?: number, cause: string}[];
-  }; // after pass 2
+  placement?: PlacementReport; // after pass 2
+  transformedPlacement?: PlacementReport; // substituted live-text lines only
+  transformedPlacementByFrame?: (PlacementReport & {frame: string, name: string})[];
   pdfResult?: OptimizeResult;
 };
 
@@ -68,16 +72,12 @@ export class FontPreflightError extends Error {
 }
 
 const safeName = (s: string) => s.replace(/[\/\\:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim() || 'deck';
-const slotOf = (f: {b: number, i: number}) => f.b ? (f.i ? 'boldItalic' : 'bold') : (f.i ? 'italic' : 'regular');
-
-// Every face the deck uses, what PowerPoint will use for it, and whether it is embedded.
+// Every face the deck uses and what PowerPoint will use for it. Fonts always remain external.
 export function fontTable(report: BuildReport): string[] {
-  const embedded = new Map(report.embeddedFonts.map(e => [`${e.typeface}|${e.slot}`, e]));
   const mark = {exact: 'ok   ', substitute: 'SUBST', 'variable-only': 'VAR  ', missing: 'MISS '} as const;
   return report.faces.map(f => {
-    const e = embedded.get(`${f.typeface}|${slotOf(f)}`);
     const target = `${f.typeface}${f.b ? ' Bold' : ''}${f.i ? ' Italic' : ''}`;
-    return `  ${mark[f.status]} ${f.figma} -> ${target}${e ? (e.embedded ? ', embedded' : `, not embedded: ${e.reason}`) : ''}${f.note && f.status !== 'exact' ? ` (${f.note})` : ''}`;
+    return `  ${mark[f.status]} ${f.figma} -> ${target}${f.note && f.status !== 'exact' ? ` (${f.note})` : ''}`;
   });
 }
 
@@ -110,7 +110,7 @@ export async function convertFigma(o: ConvertOptions): Promise<ConvertResult> {
   const build = (pass: number, corr: Corrections) => {
     const label = passes === 1 ? 'building' : `pass ${pass}/2: building`;
     emit('stage', label);
-    return buildDeck(file, frames, {scale, kern, corr, embedFonts: o.embedFonts ?? true, progress: s => emit('step', `${label}: ${s}`)}, env);
+    return buildDeck(file, frames, {scale, kern, corr, textTransform: o.textTransform, progress: s => emit('step', `${label}: ${s}`)}, env);
   };
   let {pptx, report} = await build(1, initial);
 
@@ -156,9 +156,9 @@ export async function convertFigma(o: ConvertOptions): Promise<ConvertResult> {
   closeStage();
   // After pass 2: every extractable line must be within one Figma pixel. PowerPoint rasterizes some transparent
   // and rotated text in its PDF; those lines stay explicit and named instead of being counted as passes.
-  const placement = m2 && (() => {
-    const measured = m2.lines.filter(l => l.status === 'placed');
-    const failures = m2.lines.filter(l => l.status !== 'placed' || l.offsetPx! > 1).map(l => ({
+  const placementOf = (lines: Measurement['lines']) => {
+    const measured = lines.filter(l => l.status === 'placed');
+    const failures = lines.filter(l => l.status !== 'placed' || l.offsetPx! > 1).map(l => ({
       frame: report.textLines.find(x => x.node === l.node && x.t === l.t)?.frame,
       node: l.node,
       text: l.t.trim().slice(0, 100),
@@ -168,24 +168,31 @@ export async function convertFigma(o: ConvertOptions): Promise<ConvertResult> {
       cause: l.cause ?? `${l.offsetPx} px exceeds 1 px`,
     }));
     return {
-      totalLines: m2.lines.length,
+      totalLines: lines.length,
       measuredLines: measured.length,
       within1px: measured.filter(x => x.offsetPx! <= 1).length,
-      unmeasurableLines: m2.lines.length - measured.length,
+      unmeasurableLines: lines.length - measured.length,
       maxOffsetPx: +Math.max(0, ...measured.map(x => x.offsetPx!)).toFixed(2),
       failures,
     };
-  })();
+  };
+  const placement = m2 && placementOf(m2.lines);
+  const transformedKeys = new Set(report.textLines.filter(l => l.substituted).map(l => `${l.node}\0${l.t}`));
+  const transformedPlacement = m2 && o.textTransform ? placementOf(m2.lines.filter(l => transformedKeys.has(`${l.node}\0${l.t}`))) : undefined;
+  const transformedPlacementByFrame = m2 && o.textTransform ? report.frames.map(frame => {
+    const keys = new Set(report.textLines.filter(l => l.frame === frame.id && l.substituted).map(l => `${l.node}\0${l.t}`));
+    return {frame: frame.id, name: frame.name, ...placementOf(m2!.lines.filter(l => keys.has(`${l.node}\0${l.t}`)))};
+  }) : undefined;
   const summary = (m?: Measurement) => m && {measured: m.measured, unmeasurable: m.unmeasurable, medianDy: m.medianDy, spreadMedian: m.spreadMedian, spreadMax: m.spreadMax};
   const seconds = +((Date.now() - t0) / 1000).toFixed(1);
   const reportPath = stem + '.report.json';
   writeFileSync(reportPath, JSON.stringify({
     fileKey: file.meta.fileKey, fileName: file.meta.name, version: file.meta.version, frameIds: frames, cache: file.dir, seconds, timings, passes,
-    measurement: summary(m1), corrections: m1?.corr, placement, pdf: pdfResult ?? (o.pdf ? {preset: o.pdf} : undefined),
+    measurement: summary(m1), corrections: m1?.corr, placement, transformedPlacement, transformedPlacementByFrame, pdf: pdfResult ?? (o.pdf ? {preset: o.pdf} : undefined),
     ...report,
   }, null, 1));
   for (const w of report.warnings) emit('note', `  warning: ${w}`);
-  return {pptx: out, pdf: pdfPath, report: reportPath, slides: frames.length, seconds, timings, fileName: file.meta.name, build: report, measurement: summary(m1), placement, pdfResult};
+  return {pptx: out, pdf: pdfPath, report: reportPath, slides: frames.length, seconds, timings, fileName: file.meta.name, build: report, measurement: summary(m1), placement, transformedPlacement, transformedPlacementByFrame, pdfResult};
 }
 
 // PowerPoint's PDF of an existing deck (or an existing PDF), size-optimized.

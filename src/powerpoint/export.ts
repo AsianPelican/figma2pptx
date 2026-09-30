@@ -2,11 +2,12 @@
 //
 // PowerPoint only ever sees a copy, so the source deck is never opened or locked. The copy and the PDF are
 // staged inside PowerPoint's own sandbox container: saving anywhere else raises a "Grant File Access" sheet for
-// folders PowerPoint has not been granted, which blocks AppleScript.
+// folders PowerPoint has not been granted, which blocks AppleScript. Remote CLI users need Full Disk Access to
+// copy the files in and out of this container without a separate macOS privacy prompt.
 import {execFileSync} from 'node:child_process';
 import {copyFileSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync} from 'node:fs';
 import {join, resolve, basename} from 'node:path';
-import {homedir, tmpdir} from 'node:os';
+import {homedir} from 'node:os';
 
 const SCRIPT = `on run argv
  set s to POSIX file (item 1 of argv)
@@ -70,9 +71,16 @@ export function powerPointExportFailure(e: {signal?: string, code?: string, stde
   return Error('PowerPoint export failed: ' + msg.trim().split('\n').pop());
 }
 
+export function powerPointContainer(home = homedir()): string {
+  const container = join(home, 'Library/Containers/com.microsoft.Powerpoint/Data/tmp');
+  if (!existsSync(container)) {
+    throw Error('PowerPoint container is not accessible. Enable Full Disk Access for Figma2Pptx Bridge.app; refusing to fall back to /tmp because PowerPoint would require a Grant File Access click.');
+  }
+  return container;
+}
+
 function stagingDir(): string {
-  const container = join(homedir(), 'Library/Containers/com.microsoft.Powerpoint/Data/tmp');
-  const dir = join(existsSync(container) ? container : tmpdir(), `figma2pptx-${process.pid}-${Date.now()}`);
+  const dir = join(powerPointContainer(), `figma2pptx-${process.pid}-${Date.now()}`);
   mkdirSync(dir, {recursive: true});
   return dir;
 }

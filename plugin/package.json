@@ -1,0 +1,22 @@
+{
+  "name": "figma2pptx-figma-plugin",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/code.ts --outfile dist/code.js --format=iife --target=browser --minify && bun configure.ts && bun run validate-manifest",
+    "bridge": "bun bridge/launch.ts",
+    "bridge:install": "bun bridge/install-service.ts",
+    "doctor": "bun bridge/doctor.ts",
+    "desktop:refresh": "bun build src/code.ts --outfile dist/code.js --format=iife --target=browser --minify && bun run validate-manifest && bun refresh-desktop.ts",
+    "remote": "bun bridge/remote-cli.ts",
+    "test": "bun test test",
+    "typecheck": "tsc -p tsconfig.plugin.json --noEmit && tsc -p tsconfig.bridge.json --noEmit",
+    "validate-manifest": "bun test test/manifest.test.ts"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "1.117.0",
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3"
+  }
+}
